@@ -7,6 +7,7 @@ import random
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
+from pathlib import Path
 
 import requests
 import pandas as pd
@@ -128,9 +129,11 @@ def _get_html(session: requests.Session, url: str, timeout=(8, 60)) -> str:
 
             return raw.decode("utf-8", errors="replace")
 
-        except (requests.exceptions.ReadTimeout,
-                requests.exceptions.ConnectTimeout,
-                requests.exceptions.ConnectionError) as e:
+        except (
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ConnectTimeout,
+            requests.exceptions.ConnectionError,
+        ) as e:
             last_err = e
             time.sleep((0.8 * attempt) + random.uniform(0.1, 0.6))
 
@@ -151,7 +154,11 @@ def _table_headers(table) -> List[str]:
     ths = first_tr.find_all("th")
     if not ths:
         return []
-    return [_normalize(th.get_text(" ", strip=True)) for th in ths if _normalize(th.get_text(" ", strip=True))]
+    return [
+        _normalize(th.get_text(" ", strip=True))
+        for th in ths
+        if _normalize(th.get_text(" ", strip=True))
+    ]
 
 
 def _is_notice_list_table(table) -> bool:
@@ -312,11 +319,11 @@ def _pick_detail_text(soup: BeautifulSoup) -> str:
     return ""
 
 
-# "소재지 : ... 업종 :" 또는 "소재지 : ... 처분업종 :" 전까지를 소재지로 추출
 _LOC_RE = re.compile(
     r"소재지\s*:\s*(.*?)\s*(?=(업종|처분업종)\s*:\s*)",
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
+
 
 def extract_location_from_detail(detail_text: str) -> str:
     if not detail_text:
@@ -325,14 +332,15 @@ def extract_location_from_detail(detail_text: str) -> str:
     m = _LOC_RE.search(txt)
     if m:
         return _normalize(m.group(1))
-    # fallback: "소재지 :" 이후 다음 " :" 라벨 전까지
     m2 = re.search(r"소재지\s*:\s*(.*?)(?=\s*[가-힣A-Za-z0-9ㆍ\(\)]+\s*:\s*)", txt)
     if m2:
         return _normalize(m2.group(1))
     return ""
 
 
-def fetch_one_detail(session: requests.Session, seqno: str, url: str, timeout=(8, 60)) -> Dict[str, str]:
+def fetch_one_detail(
+    session: requests.Session, seqno: str, url: str, timeout=(8, 60)
+) -> Dict[str, str]:
     if not url:
         return {"seqno": seqno, "detail_text": "", "detail_ok": "0", "detail_error": "missing_url"}
 
@@ -351,7 +359,9 @@ def fetch_one_detail(session: requests.Session, seqno: str, url: str, timeout=(8
         return {"seqno": seqno, "detail_text": "", "detail_ok": "0", "detail_error": str(e)}
 
 
-def fetch_details_parallel(df: pd.DataFrame, workers: int, timeout=(8, 60), progress_cb=None) -> pd.DataFrame:
+def fetch_details_parallel(
+    df: pd.DataFrame, workers: int, timeout=(8, 60), progress_cb=None
+) -> pd.DataFrame:
     if df.empty or "seqno" not in df.columns or "notice_url" not in df.columns:
         return df
 
@@ -383,7 +393,6 @@ def fetch_details_parallel(df: pd.DataFrame, workers: int, timeout=(8, 60), prog
     detail_df = pd.DataFrame(results)
     out = df.merge(detail_df, on="seqno", how="left")
 
-    # ✅ 상세 소재지 컬럼 생성
     if "detail_text" in out.columns:
         out["상세소재지"] = out["detail_text"].astype(str).apply(extract_location_from_detail)
 
@@ -404,7 +413,6 @@ def crawl_list_pages(
     params = build_query_params(d_from, d_to)
     session = build_session()
 
-    # page=1
     p1 = dict(params)
     p1["GotoPage"] = 1
     url1 = _build_url(BASE_URL, p1)
@@ -478,7 +486,7 @@ def crawl_list_pages(
 
 
 # ==========================================================
-# 6) 다운로드 헬퍼 (CSV는 상세소재지 포함 + detail_text 제거)
+# 6) 다운로드 헬퍼
 # ==========================================================
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
@@ -499,11 +507,9 @@ def to_xlsx_bytes_optional(df: pd.DataFrame) -> Optional[bytes]:
 def make_csv_export_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
-    # 상세소재지 컬럼이 아직 없으면 생성 (상세수집 OFF 상태 대비)
     if "상세소재지" not in out.columns and "detail_text" in out.columns:
         out["상세소재지"] = out["detail_text"].astype(str).apply(extract_location_from_detail)
 
-    # detail_text는 CSV에서 제외(요청사항)
     if "detail_text" in out.columns:
         out = out.drop(columns=["detail_text"], errors="ignore")
 
@@ -511,10 +517,8 @@ def make_csv_export_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_disposition_column(df: pd.DataFrame) -> Optional[str]:
-    # 보통 "처분내용"이 있음. 없으면 유사 컬럼 탐색.
     if "처분내용" in df.columns:
         return "처분내용"
-    # fallback: 처분내용 비슷한 컬럼
     for c in df.columns:
         if isinstance(c, str) and "처분" in c and "내용" in c:
             return c
@@ -527,7 +531,7 @@ def get_disposition_column(df: pd.DataFrame) -> Optional[str]:
 st.set_page_config(page_title="KISCON 공고(처분) 크롤러", layout="wide")
 st.title("KISCON 공고(처분) 크롤러")
 
-# 기본값: 종료일=어제, 시작일=그 전날 (max 제한 없음)
+# 기본값: 종료일=어제, 시작일=그 전날
 _today = date.today()
 _default_to = _today - timedelta(days=1)
 _default_from = _today - timedelta(days=2)
@@ -551,6 +555,27 @@ with st.sidebar:
     sleep_sec = st.slider("페이지 간 대기(초)", 0.0, 1.0, 0.05, 0.05)
 
     run = st.button("불러오기", type="primary")
+
+    # ------------------------------------------------------
+    # ☕ 후원 버튼 + st.dialog(데코레이터 방식)
+    # ------------------------------------------------------
+    st.divider()
+
+    @st.dialog("커피 한잔 후원하기 ☕")
+    def donate_dialog():
+        st.caption("아래 계좌로 후원해주시면 개발에 큰 도움이 됩니다.")
+        st.code("국민 03290204472800")
+
+        img_path = Path(__file__).parent / "donate_qr.png"
+        if img_path.exists():
+            st.image(str(img_path), use_container_width=True)
+        else:
+            st.info("이미지를 띄우려면 app.py와 같은 폴더에 donate_qr.png 파일을 넣어주세요.")
+
+        st.caption("계좌번호는 박스에서 드래그해서 복사할 수 있어요.")
+
+    if st.button("☕ 커피 한잔 후원하기", use_container_width=False):
+        donate_dialog()
 
 status_box = st.empty()
 progress = st.progress(0)
@@ -606,9 +631,6 @@ if not df.empty:
     st.subheader("미리보기")
     st.dataframe(df, use_container_width=True, height=420)
 
-    # ======================================================
-    # ✅ 다운로드 필터: 처분내용 기준
-    # ======================================================
     disp_col = get_disposition_column(df)
 
     st.subheader("다운로드")
@@ -629,7 +651,6 @@ if not df.empty:
 
     col_a, col_b = st.columns(2)
 
-    # CSV: 상세소재지 포함 + detail_text 제거 + (필터 적용)
     with col_a:
         csv_df = make_csv_export_df(df_filtered)
         st.download_button(
@@ -639,7 +660,6 @@ if not df.empty:
             mime="text/csv",
         )
 
-    # Excel: 원본 그대로(필터 적용은 동일하게)
     with col_b:
         xlsx_bytes = to_xlsx_bytes_optional(df_filtered)
         if xlsx_bytes is not None:
