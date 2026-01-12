@@ -75,7 +75,7 @@ export async function fetchHtml(url: string, params?: Record<string, any>): Prom
       'Referer': BASE_URL,
       'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     },
-    timeout: 30000,
+    timeout: 120000,
   }).catch((error) => {
     if (axios.isAxiosError(error)) {
       console.error(`Fetch error for ${url}:`, {
