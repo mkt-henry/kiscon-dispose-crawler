@@ -64,6 +64,8 @@ export async function fetchHtml(url: string, params?: Record<string, any>): Prom
 
   if (proxyUrl) {
     console.log(`Using proxy: ${proxyUrl.replace(/:[^:@]*@/, ':***@')}`);
+  } else {
+    console.log('No PROXY_URL configured. Using direct connection.');
   }
 
   const response = await axios.get(url, {
